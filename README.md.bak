@@ -1,0 +1,115 @@
+# nacos-config-sync
+
+在主机上常驻运行的轻量工具：从 **Nacos 配置中心** 拉取指定配置，订阅变更，并将内容**原子写入**本地目录中的文件（文件名与 `dataId` 一致）。适用于把集中配置同步到本机路径，供应用或脚本读取。
+
+
+## 主机本地配置 nacos.ini 如下：
+示例：
+
+```ini
+[nacos]
+ipAddr = 192.168.1.10
+port = 8848
+namespaceId = hosts
+username = nacos
+password = nacos
+group = hosts
+hostId = saas-dev-app01
+logDir = /data/nacos-config-sync/logs/
+cacheDir = /data/nacos-config-sync/logs/cache/
+logLevel = info
+```
+
+## nacos上的配置 saas-dev-app01.ini 配置如下：
+示例：
+
+```ini
+[common]
+group = common
+dataId = core-common-cache.properties,core-common-mq-config.xml,core-common-redis.properties,dubbo.properties,logback.xml
+
+[sso]
+dataId = db-core.properties,db-rbac.properties,nzp-core-bss-server.properties,nzp-core-sso-server.properties,nzp-uam-rbac-server.properties,yunsdk.properties
+group = sso
+path = /data/app/sso/config
+
+[ggw]
+dataId = ddb-eca.properties,db-ems.properties,db-erc.properties,db-hfmb.properties,db-survey.properties,nzp-eca-ggw-server.properties,nzp-ems-call-server.properties,nzp-erc-resource-server.properties,nzp-erc-transcode-sdk.properties
+group = ggw
+path = /data/app/ggw/config
+
+
+```
+
+
+## 功能概览
+程序默认读取当前工作目录下的 `nacos.ini`，并根据其中的 `hostId` 再加载 **`{hostId}.ini`**（例如 `saas-dev-app01.ini`）。按 `Ctrl+C` 发送退出信号后，会执行 `Stop()` 收尾逻辑。
+
+- 启动时读取nacos.ini，然后从nacos读取saas-dev-app01.ini，对saas-dev-app01.ini中，除`common`外每个 `dataId` 做一次**初始拉取**，并 **Listen** 后续变更。
+- `common` 为通用配置，需同时放置于与其他项目的目录下，如/data/app/sso/config，/data/app/ggw/config
+- 如果`path`路径不存在，就创建。
+- 写入采用「临时文件 + `rename`」，降低写到一半被读到的风险。
+- 日志为单行 JSON（`logger` 包），便于采集。
+
+## 环境要求
+
+- Go **1.19+**
+- 可访问的 Nacos Server（默认配置端口 **8848**）
+
+## 快速开始
+
+```bash
+go build -o nacos-sync2 .
+./nacos-sync2
+```
+
+
+
+## 配置文件
+
+### 1. `nacos.ini` — 连接 Nacos
+
+与 `config.NacosConfig` 字段对应（INI 键名不区分大小写时可按下列书写）：
+
+| 键 | 说明 |
+| --- | --- |
+| `ipAddr` | Nacos 服务器地址 |
+| `port` | 端口（整数） |
+| `namespaceId` | 命名空间 ID |
+| `username` / `password` | 开启鉴权时使用，会传给 SDK |
+| `group` | 预留字段，当前同步分组由主机配置中的各段指定 |
+| `hostId` | 主机标识，用于拼接主机配置文件名 `{hostId}.ini` |
+| `logDir` | （可选）Nacos SDK 日志目录，不填则走系统临时目录 |
+| `cacheDir` | （可选）Nacos SDK 缓存目录，不填则走系统临时目录 |
+| `logLevel` | （可选）SDK 日志级别，建议常驻使用 `info`/`warn` |
+
+
+
+### 2. `{hostId}.ini` — 本机要同步哪些配置
+
+- **`[common]`**：公共配置段，字段包括 `dataId`、`group`。
+- **其它段名**：视为模块名，字段为 `group`、`dataId`、`path`。
+
+说明：
+
+- **`path`**：本地目录，同步后的文件路径为 `{path}/{dataId}`。
+- **`dataId`**：支持英文逗号分隔多个 ID，例如 `app.properties,bootstrap.yml`（会拆成多条同步任务）。
+
+示例 `saas-dev-app01.ini`：
+
+
+
+## 项目结构
+
+- 请自行合理安排。
+
+
+
+## 注意事项
+
+- 如未配置 `logDir` / `cacheDir`，程序会自动使用系统临时目录（Windows 与 Linux 都可用）。
+- Linux 生产环境建议显式配置 `logDir`/`cacheDir` 到持久目录（如 `/var/log/...`、`/var/cache/...`），并提前创建目录与授权。
+- 确保 **`path` 目录已存在** 且进程有写权限，否则写入会失败并在日志中报错。
+- 未在 Nacos 中创建对应 `dataId` 时，`GetConfig` 可能失败，请先在控制台或通过 API 发布配置。
+
+

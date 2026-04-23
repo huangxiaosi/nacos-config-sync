@@ -1,56 +1,48 @@
 package main
 
 import (
-	"log"
+	"context"
+	"errors"
 	"os"
-	"path/filepath"
-	"strings"
+	"os/signal"
+	"syscall"
+
+	"nacos-config-sync/config"
+	"nacos-config-sync/logger"
+	"nacos-config-sync/syncer"
 )
 
 func main() {
-	initLogs()
+	log := logger.New()
 
-	// 加载配置文件
-	cfg, _ := loadAPPConfig()
-
-	// 接待所有的文件并监听变化
-	for _, section := range cfg.SectionStrings()[1:] {
-		projectDir := getCurrentAbPathByCaller()
-		var configDir string = filepath.Join(projectDir, "config")
-
-		groupIni := cfg.Section(section).Key("group").String()
-		dataidIni := cfg.Section(section).Key("dataid").String()
-		configPath := cfg.Section(section).Key("configpath").String()
-
-		dataIDs := strings.Split(dataidIni, ",")
-		group := groupIni
-
-		appConfigDir := ""
-		if configPath == "" {
-			appConfigDir = filepath.Join(configDir, group)
-			//os.Mkdir(appConfigDir, 0777)
-		} else {
-			appConfigDir = configPath
-		}
-
-		os.Mkdir(appConfigDir, 0777)
-
-		if group != "common" {
-			commonDir := filepath.Join(configDir, "common")
-			fileslist, _ := listFilesInDirectory(commonDir)
-			for _, file := range fileslist {
-				linkFromfile := filepath.Join(commonDir, file)
-				linkFromTo := filepath.Join(appConfigDir, file)
-				os.Symlink(linkFromfile, linkFromTo)
-			}
-
-		}
-
-		err := runNacosConfig(appConfigDir, group, dataIDs)
-		if err != nil {
-			log.Println(err.Error())
-		}
-
+	wd, err := os.Getwd()
+	if err != nil {
+		log.Error("getwd failed", map[string]interface{}{"error": err.Error()})
+		os.Exit(1)
 	}
-	select {}
+
+	nc, err := config.LoadNacosConfig(wd)
+	if err != nil {
+		log.Error("load nacos.ini failed", map[string]interface{}{"error": err.Error()})
+		os.Exit(1)
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	s, err := syncer.New(log, nc)
+	if err != nil {
+		log.Error("init syncer failed", map[string]interface{}{"error": err.Error()})
+		os.Exit(1)
+	}
+
+	runErr := s.Run(ctx)
+	s.Stop()
+
+	if runErr != nil && !errors.Is(runErr, context.Canceled) {
+		log.Error("run failed", map[string]interface{}{"error": runErr.Error()})
+		os.Exit(1)
+	}
+
+	log.Info("stopped cleanly", map[string]interface{}{})
 }
