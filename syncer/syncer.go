@@ -324,6 +324,7 @@ func buildWatchJobs(h *config.HostConfig) []*watchJob {
 		}
 	}
 
+	pathInherit := h.PathInheritsCommon()
 	for _, id := range h.Common.DataIDs {
 		k := key(h.Common.NamespaceID, h.Common.Group, id)
 		j, ok := byKey[k]
@@ -332,6 +333,9 @@ func buildWatchJobs(h *config.HostConfig) []*watchJob {
 			byKey[k] = j
 		}
 		for _, p := range modulePaths {
+			if !pathInherit[p] {
+				continue
+			}
 			if owned := pathOwnedDataIDs[p]; owned != nil {
 				if _, conflict := owned[id]; conflict {
 					// Same filename exists in module config for this path, skip common copy.
@@ -374,9 +378,13 @@ func collectCommonSkips(h *config.HostConfig) []commonSkip {
 		}
 	}
 
+	pathInherit := h.PathInheritsCommon()
 	seen := make(map[string]struct{})
 	for _, sec := range h.Sections {
 		p := filepath.Clean(sec.Path)
+		if !pathInherit[p] {
+			continue
+		}
 		owned := pathOwnedDataIDs[p]
 		for _, id := range h.Common.DataIDs {
 			if _, ok := owned[id]; !ok {

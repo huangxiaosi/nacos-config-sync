@@ -8,7 +8,7 @@
 
 - 启动时读取 `nacos.ini`，然后从 Nacos 读取 `{hostId}.ini`。
 - 对 `{hostId}.ini` 中，除 `common` 外每个 `dataId` 做一次**初始拉取**，并 **Listen** 后续变更。
-- `common` 为通用配置，会同时写入所有非 `common` 模块的目录（如 `/data/app/sso/config`、`/data/app/ggw/config`）。
+- `common` 为通用配置，默认会写入各非 `common` 模块的 `path`；模块可通过 **`inheritCommon=false`** 关闭对本路径的 common 分发。
 - 若 `common` 与模块段在同一目录下存在同名 `dataId`，以模块段配置为准（`common` 不覆盖模块同名文件）。
 - 如果 `path` 不存在，自动创建目录。
 - 写入采用「临时文件 + `rename`」，降低写到一半被读到的风险。
@@ -90,12 +90,15 @@ path = /data/app/project01/config
 group = project02
 dataId = ddb-project02.properties,nzp-project02-server.properties,nzp-ems-project02-server.properties
 path = /data/app/project02/config
+; 可选：不写或 true 时接收 [common]；为 false 时本模块目录不同步 common 中的文件（仅同步本段 dataId）
+; inheritCommon = false
 ```
 
 说明：
 
-- **`[common]`**：公共配置段，字段包括 `namespaceId`、`group`、`dataId`；会分发到所有业务模块目录。
+- **`[common]`**：公共配置段，字段包括 `namespaceId`、`group`、`dataId`；默认会分发到各业务模块的 `path`（见下项 `inheritCommon`）。
 - **其它段名**：视为模块名，字段为 `group`、`dataId`、`path`；`namespaceId` 可省略（默认继承 `common.namespaceId`）。
+- **`inheritCommon`**（可选，默认 `true`）：`true` / `1` / `yes` / `on` 表示该模块目录接收 `common` 中的 `dataId`；`false` / `0` / `no` / `off` 表示不接收。若多个模块段配置了**相同**的 `path`，仅当这些段**全部为** `inheritCommon=true`（或省略）时，该路径才会接收 `common`。
 - **`path`**：本地目录，同步后的文件路径为 `{path}/{dataId}`。
 - **`dataId`**：支持英文逗号分隔多个 ID，如 `app.properties,bootstrap.yml`。
 - 为避免混用命名空间，模块若显式配置 `namespaceId`，其值必须与 `common.namespaceId` 一致。
@@ -125,6 +128,7 @@ path = /data/app/project02/config
 - 程序会监听 `{hostId}.ini` 本身的变更；新增/删除 `dataId` 或调整 `path` 后可自动生效，无需重启进程。
 - 同一个 `(namespaceId, group, dataId)` 仅注册一次监听，避免重复订阅。
 - 配置变更后，按映射关系分发写入对应目录。
+- 将某模块的 **`inheritCommon`** 改为 `false`（或同一路径下任一段改为不继承）后，重载主机配置时，原先由 `common` 落在该路径下的文件若已不再需要，会按「过时文件」逻辑删除。
 - 当某模块移除某个 `dataId`（或该 `dataId` 不再映射到某目录）时，程序会删除本地对应文件。
 - 收到退出信号时，先取消监听，再关闭 Nacos 客户端连接。
 - 单个 `dataId` 拉取/监听失败不会导致进程退出，程序会继续处理其它配置并在日志里输出失败项。

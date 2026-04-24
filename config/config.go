@@ -30,11 +30,35 @@ type HostSection struct {
 	Group       string
 	Path        string
 	DataIDs     []string
+	// InheritCommon: when true (default), this module's path receives [common] dataIds (unless overridden by same-name module dataId). When false, common is not synced to this path.
+	InheritCommon bool
 }
 
 type HostConfig struct {
 	Common   HostSection
 	Sections []HostSection
+}
+
+// PathInheritsCommon reports whether [common] dataIds should be synced under each module path.
+// If several sections share the same path, common is applied only when all of them have InheritCommon true.
+func (h *HostConfig) PathInheritsCommon() map[string]bool {
+	groups := make(map[string][]bool)
+	for _, sec := range h.Sections {
+		p := filepath.Clean(sec.Path)
+		groups[p] = append(groups[p], sec.InheritCommon)
+	}
+	out := make(map[string]bool, len(groups))
+	for p, flags := range groups {
+		in := true
+		for _, f := range flags {
+			if !f {
+				in = false
+				break
+			}
+		}
+		out[p] = in
+	}
+	return out
 }
 
 func LoadNacosConfig(workDir string) (*NacosConfig, error) {
@@ -116,10 +140,11 @@ func ParseHostConfigFromContent(content string) (*HostConfig, error) {
 		return nil, fmt.Errorf("section common missing namespaceId")
 	}
 	result.Common = HostSection{
-		Name:        "common",
-		NamespaceID: commonNamespaceID,
-		Group:       commonGroup,
-		DataIDs:     commonDataIDs,
+		Name:          "common",
+		NamespaceID:   commonNamespaceID,
+		Group:         commonGroup,
+		DataIDs:       commonDataIDs,
+		InheritCommon: true,
 	}
 
 	for _, sec := range sections {
@@ -139,11 +164,19 @@ func ParseHostConfigFromContent(content string) (*HostConfig, error) {
 		}
 
 		item := HostSection{
-			Name:        name,
-			NamespaceID: strings.TrimSpace(sec.Key("namespaceId").String()),
-			Group:       group,
-			Path:        strings.TrimSpace(sec.Key("path").String()),
-			DataIDs:     dataIDs,
+			Name:          name,
+			NamespaceID:   strings.TrimSpace(sec.Key("namespaceId").String()),
+			Group:         group,
+			Path:          strings.TrimSpace(sec.Key("path").String()),
+			DataIDs:       dataIDs,
+			InheritCommon: true,
+		}
+		if raw := strings.TrimSpace(sec.Key("inheritCommon").String()); raw != "" {
+			v, err := parseBoolFlexible(raw)
+			if err != nil {
+				return nil, fmt.Errorf("section %s inheritCommon: %w", name, err)
+			}
+			item.InheritCommon = v
 		}
 
 		if item.NamespaceID == "" {
@@ -163,6 +196,18 @@ func ParseHostConfigFromContent(content string) (*HostConfig, error) {
 	}
 
 	return result, nil
+}
+
+func parseBoolFlexible(raw string) (bool, error) {
+	s := strings.ToLower(strings.TrimSpace(raw))
+	switch s {
+	case "true", "1", "yes", "y", "on":
+		return true, nil
+	case "false", "0", "no", "n", "off":
+		return false, nil
+	default:
+		return false, fmt.Errorf("expected true/false/1/0/yes/no/on/off, got %q", raw)
+	}
 }
 
 func parseCSV(raw string) []string {
