@@ -20,6 +20,8 @@ type NacosConfig struct {
 	LogDir      string
 	CacheDir    string
 	LogLevel    string
+	// RpcKeepAliveSeconds > 0 sets env NACOS_SDK_RPC_KEEP_ALIVE_SECONDS before SDK init (idle HealthCheckRequest interval). Zero: do not set env (default 5s unless env is already set).
+	RpcKeepAliveSeconds uint64
 }
 
 type HostSection struct {
@@ -59,6 +61,14 @@ func LoadNacosConfig(workDir string) (*NacosConfig, error) {
 		LogDir:      strings.TrimSpace(sec.Key("logDir").String()),
 		CacheDir:    strings.TrimSpace(sec.Key("cacheDir").String()),
 		LogLevel:    strings.TrimSpace(sec.Key("logLevel").String()),
+	}
+
+	if raw := strings.TrimSpace(sec.Key("rpcKeepAliveSeconds").String()); raw != "" {
+		v, err := strconv.ParseUint(raw, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("parse nacos.rpcKeepAliveSeconds failed: %w", err)
+		}
+		result.RpcKeepAliveSeconds = v
 	}
 
 	if result.IPAddr == "" {

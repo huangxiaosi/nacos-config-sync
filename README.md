@@ -12,6 +12,7 @@
 - 若 `common` 与模块段在同一目录下存在同名 `dataId`，以模块段配置为准（`common` 不覆盖模块同名文件）。
 - 如果 `path` 不存在，自动创建目录。
 - 写入采用「临时文件 + `rename`」，降低写到一半被读到的风险。
+- 落盘前会读取目标文件：若**内容与 Nacos 一致**则**跳过写入**，避免无意义地刷新文件修改时间（`mtime`）。
 - 日志为单行 JSON（`logger` 包），便于采集。
 
 ## 环境要求
@@ -51,6 +52,8 @@ hostId = saas-dev-app01
 logDir = /data/nacos-config-sync/logs/
 cacheDir = /data/nacos-config-sync/logs/cache/
 logLevel = info
+; 可选：拉长 Nacos SDK 对服务端的 gRPC 应用层 HealthCheck 间隔（秒），见下文「SDK 与依赖」
+; rpcKeepAliveSeconds = 30
 ```
 
 字段说明（与 `config.NacosConfig` 对应）：
@@ -65,7 +68,8 @@ logLevel = info
 | `hostId` | 是 | 主机标识，用于拼接主机配置名 `{hostId}.ini` |
 | `logDir` | 否 | Nacos SDK 日志目录，不填则走系统临时目录 |
 | `cacheDir` | 否 | Nacos SDK 缓存目录，不填则走系统临时目录 |
-| `logLevel` | 否 | SDK 日志级别，建议 `info`/`warn` |
+| `logLevel` | 否 | SDK 日志级别，建议 `info`/`warn`；设为 `debug` 时会打印大量 gRPC 请求日志 |
+| `rpcKeepAliveSeconds` | 否 | 大于 0 时写入环境变量 `NACOS_SDK_RPC_KEEP_ALIVE_SECONDS`（秒），拉长 SDK 空闲时的 gRPC `HealthCheckRequest` 间隔；不写或 `0` 不改环境变量（未设 env 时默认 **5s**）。详见「SDK 与依赖」。 |
 
 ### 2. `{hostId}.ini` — 本机要同步哪些配置
 
@@ -109,6 +113,8 @@ path = /data/app/project02/config
 │   └── atomicfile.go
 ├── logger/
 │   └── logger.go
+├── third_party/
+│   └── nacos-sdk-go-v2/    # 基于官方 v2.2.7 的本地替换，见「SDK 与依赖」
 ├── go.mod
 └── README.md
 ```
@@ -129,6 +135,13 @@ path = /data/app/project02/config
 - Linux 生产环境建议显式配置 `logDir`/`cacheDir` 到持久目录（如 `/var/log/...`、`/var/cache/...`），并提前创建目录与授权。
 - 请确保目标 `path` 目录可写；目录不存在时程序会尝试自动创建。
 - 未在 Nacos 中创建对应 `dataId` 时，`GetConfig` 可能失败，请先在控制台或通过 API 发布配置。
+
+## SDK 与依赖
+
+- `go.mod` 使用 `replace`，将 `github.com/nacos-group/nacos-sdk-go/v2 v2.2.7` 指向本仓库下的 **`third_party/nacos-sdk-go-v2`**（官方 **v2.2.7** 源码加极小补丁）。
+- 补丁目的：官方常量 `KEEP_ALIVE_TIME` 固定为 **5 秒**，无法在配置中调整；补丁使 SDK 在空闲时发送 **`HealthCheckRequest`** 的周期可读环境变量 **`NACOS_SDK_RPC_KEEP_ALIVE_SECONDS`**（正整数，单位秒）。`nacos.ini` 中的 **`rpcKeepAliveSeconds`** 会在启动客户端前写入该环境变量（仅当值大于 0）。
+- 若日志中出现大量 `grpc request nacos server success, request=... HealthCheckRequest ...`，多为 **`logLevel=debug`** 所致；不需要排查问题时可将 `logLevel` 设为 **`info`**。
+- 另：SDK 内 gRPC 传输层 keepalive 与上述应用层健康检查不同，可通过环境变量 **`nacos.remote.grpc.keep.alive.millis`** 调整（与 `rpcKeepAliveSeconds` 无关）。
 
 ## 最小可运行示例
 
@@ -182,7 +195,7 @@ go build -o nacos-sync2.exe .
 .\nacos-sync2.exe
 ```
 
-启动后会先做一次初始拉取，再持续监听变更；`common` 配置会同时写入 `sso`、`ggw` 等业务目录。
+启动后会先做一次初始拉取，再持续监听变更；`common` 配置会同时写入各业务模块的 `path` 目录。
 
 ## 常见故障排查
 

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"sync"
 
 	"nacos-config-sync/atomicfile"
@@ -37,10 +38,10 @@ type Syncer struct {
 	nacos *config.NacosConfig
 
 	applyMu sync.Mutex
-	mu       sync.Mutex
-	stopped  bool
-	clients  map[string]config_client.IConfigClient
-	active   map[string]watchJob
+	mu      sync.Mutex
+	stopped bool
+	clients map[string]config_client.IConfigClient
+	active  map[string]watchJob
 }
 
 func New(log *logger.Logger, nc *config.NacosConfig) (*Syncer, error) {
@@ -62,6 +63,10 @@ func New(log *logger.Logger, nc *config.NacosConfig) (*Syncer, error) {
 }
 
 func buildConfigClient(nc *config.NacosConfig, namespaceID string) (config_client.IConfigClient, error) {
+	if nc.RpcKeepAliveSeconds > 0 {
+		_ = os.Setenv("NACOS_SDK_RPC_KEEP_ALIVE_SECONDS", strconv.FormatUint(nc.RpcKeepAliveSeconds, 10))
+	}
+
 	logDir := nc.LogDir
 	if logDir == "" {
 		logDir = filepath.Join(os.TempDir(), "nacos-config-sync", "log")
