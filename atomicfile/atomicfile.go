@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 )
 
+const targetFileMode = 0o644
+
 // Write creates parent dirs, skips write when content is unchanged,
 // otherwise writes to a temp file in dir and renames to dir/name.
 func Write(dir, name, content string) error {
@@ -19,6 +21,9 @@ func Write(dir, name, content string) error {
 	existing, err := os.ReadFile(final)
 	if err == nil {
 		if bytes.Equal(existing, newContent) {
+			if err := os.Chmod(final, targetFileMode); err != nil {
+				return fmt.Errorf("chmod %s: %w", final, err)
+			}
 			return nil
 		}
 	} else if !os.IsNotExist(err) {
@@ -49,6 +54,9 @@ func Write(dir, name, content string) error {
 	if err := os.Rename(tmpPath, final); err != nil {
 		_ = os.Remove(tmpPath)
 		return fmt.Errorf("rename to %s: %w", final, err)
+	}
+	if err := os.Chmod(final, targetFileMode); err != nil {
+		return fmt.Errorf("chmod %s: %w", final, err)
 	}
 	return nil
 }
